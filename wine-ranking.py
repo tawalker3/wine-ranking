@@ -91,7 +91,7 @@ class WineRanking(object):
         combinations = itertools.combinations(vintages, 2)
         if not list(combinations):
             # To prevent error from no combinations
-            return None
+            return wins_dict, total_dict, pairs_dict
         for combination in combinations:
             wines = (combination[0], combination[1])
             if filtered[wines[0]] == filtered[wines[1]]:
