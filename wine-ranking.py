@@ -11,9 +11,9 @@ class WineRanking(object):
     def __init__(self, country, grape, rating_cutoff, wine_type_id):
         """
         INPUT:
-            country (str) - country to limit search to.
+            country (str) - country to limit search to
             grape (str) - grape name
-            rating_cutoff (int) - number of reviews wine needs to be considered
+            rating_cutoff (int) - number of reviews wine needs to have
             wine_type_id (int) - type id to narrow results by
         OUTPUT:
             None
@@ -78,8 +78,8 @@ class WineRanking(object):
             wins_dict (dict) - dict with wines as keys, wins as values.
             total_dict (dict) - dict with wines as keys, 'games played'
                                 as values.
-            pairs_dict (dict) - dict with wine pairs as keys,
-                                'matches played' as values.
+            pairs_dict (dict) - dict with wine pairs as keys, 'matches played'
+                                as values.
         OUTPUT:
             dict, dict, dict
         Inputs information into dicts based on one user's ratings.
@@ -87,32 +87,32 @@ class WineRanking(object):
         # Get non-NaN ratings for the user
         filtered = column[column > 0]
         vintages = list(filtered.index)
-        # Make list of all possible pairs of vintages rated by user
-        combinations = itertools.combinations(vintages, 2)
-        if not list(combinations):
-            # To prevent error from no combinations
-            return wins_dict, total_dict, pairs_dict
-        for combination in combinations:
-            wines = (combination[0], combination[1])
-            if filtered[wines[0]] == filtered[wines[1]]:
-                # Wines tied. Count as two games where each wine won one game.
-                for wine in wines:
-                    wins_dict[wine] += 1
-                    total_dict[wine] += 1
-                pairs_dict[combination] += 1
-            elif filtered[wines[0]] > filtered[wines[1]]:
-                # Win goes to wine 1
-                wins_dict[wines[0]] += 1
-            else:
-                # Win goes to wine 2
-                wins_dict[wines[1]] += 1
 
-            for wine in wines:
-                # Add to number of games played for each wine
-                total_dict[wine] += 1
-            # Add to games played between the two wines
-            pairs_dict[combination] += 1
-            return wins_dict, total_dict, pairs_dict
+        # Need more than one wine to make pairs
+        if len(vintages) > 1:
+            # Make list of all possible pairs of vintages rated by user
+            combinations = itertools.combinations(vintages, 2)
+            for combination in combinations:
+                wines = (combination[0], combination[1])
+                if filtered[wines[0]] == filtered[wines[1]]:
+                    # Wines tied. Count as two games where each wine won one.
+                    for wine in wines:
+                        wins_dict[wine] += 1
+                        total_dict[wine] += 1
+                    pairs_dict[combination] += 1
+                elif filtered[wines[0]] > filtered[wines[1]]:
+                    # Win goes to wine 1
+                    wins_dict[wines[0]] += 1
+                else:
+                    # Win goes to wine 2
+                    wins_dict[wines[1]] += 1
+
+                for wine in wines:
+                    # Add to number of games played for each wine
+                    total_dict[wine] += 1
+                # Add to games played between the two wines
+                pairs_dict[combination] += 1
+        return wins_dict, total_dict, pairs_dict
 
     def create_dicts(self, df):
         """
@@ -132,7 +132,6 @@ class WineRanking(object):
         wins_dict = dict.fromkeys(vintages, 0)
         total_dict = dict.fromkeys(vintages, 0)
         pairs_dict = dict.fromkeys(combinations, 0)
-
         # Calculate wins and losses for each wine
         for user in users:
             wins_dict, total_dict, pairs_dict = self.get_values(df[user],
@@ -194,6 +193,7 @@ class WineRanking(object):
         data_pivot = self.pivot_table(df)
 
         wins_dict, total_dict, pairs_dict = self.create_dicts(data_pivot)
-        vintages = list(data_pivot.index)
 
-        return self.solve(vintages, wins_dict, total_dict, pairs_dict)
+        vintages = list(data_pivot.index)
+        self.ranking = self.solve(vintages, wins_dict, total_dict, pairs_dict)
+        return self.ranking
