@@ -58,19 +58,6 @@ class WineRanking(object):
         df = df.drop_duplicates(['vintage_id', 'user_id'])
         return df
 
-    def pivot_table(self, df):
-        """
-        INPUT:
-            df (df) - Dataframe to pivot.
-        OUTPUT:
-            df
-        Pivots dataframe to put users as columns, wines as rows,
-            ratings as values.
-        """
-        # Pivot for more useful dataframe
-        data_pivot = df.pivot('vintage_id', 'user_id', 'rating')
-        return data_pivot
-
     def get_values(self, column, wins_dict, total_dict, pairs_dict):
         """
         INPUT:
@@ -190,7 +177,8 @@ class WineRanking(object):
         """
         df = self.get_data()
         df = self.clean_data(df)
-        data_pivot = self.pivot_table(df)
+        # Pivot for more useful dataframe
+        data_pivot = df.pivot('vintage_id', 'user_id', 'rating')
 
         wins_dict, total_dict, pairs_dict = self.create_dicts(data_pivot)
 
