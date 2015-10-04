@@ -11,10 +11,13 @@ More details on the method can be found at this link: http://www.colleyrankings.
 
 This class is set up for the specific database used, but here is an example of how to use it to rank all the German Rieslings in the database with more than 1 review:
 
+```python
 wr = WineRanking("'de'", "'Riesling'", 1, 2)
 wr.rank_wines() # Call ranking method
+```
 
 The resulting table of wines ordered by their calculated ranking is also stored. It can be accessed by calling
 the ranking attribute:
-
+```python
 print wr.ranking
+```
