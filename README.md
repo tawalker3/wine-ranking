@@ -21,3 +21,7 @@ the ranking attribute:
 ```python
 print wr.ranking
 ```
+
+This code can be used to rank other products, not just wines. The input csv should be structured similarly to the example above, except the "vintage_id" column would contain the id numbers for the products being ranked.
+
+<b>Note:</b> This method may not work well for comparing across multiple subcategories of products due to variations in subcategory attributes. For example, red wines and white wines have significantly different defining characteristics, so should not be ranked together as one category.
