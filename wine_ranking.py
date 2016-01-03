@@ -1,48 +1,29 @@
-from pandas.io.sql import read_sql
 import pandas as pd
 import numpy as np
 import itertools
-import os
-import psycopg2
+from collections import Counter
+from scipy import linalg
 
 
 class WineRanking(object):
 
-    def __init__(self, country, grape, rating_cutoff, wine_type_id):
+    def __init__(self, csv_path, rates_min, out_path):
         """
         INPUT:
-            country (str) - country to limit search to
-            grape (str) - grape name
-            rating_cutoff (int) - number of reviews wine needs to have
-            wine_type_id (int) - type id to narrow results by
+            csv_path (str) - path to csv file from which to load data.
+            rates_min (int) - number of ratings wine needs to have.
+            out_path (str) - csv file path to write results.
         OUTPUT:
             None
-        Queries database and returns pandas dataframe.
+        Sets variables for csv file paths and minimum number of ratings for a
+        wine to be considered.
         """
-        self.country = country
-        self.grape = grape
-        self.rating_cutoff = rating_cutoff
-        self.wine_type_id = wine_type_id
 
-    def get_data(self):
-        """
-        INPUT:
-            None
-        OUTPUT:
-            df
-        Queries database and returns pandas dataframe.
-        """
-        postgres_pass = os.getenv('POSTGRES_PASSWORD')
-        conn = psycopg2.connect(database='vivino', user='postgres',
-                                password=postgres_pass)
-        query = '''SELECT vintage_id, user_id, rating
-                   FROM cleaned
-                   WHERE country=%s AND wine_grape_name=%s AND
-                   rate_count>%d AND wine_type_id=%d;''' % (self.country,
-                                                            self.grape,
-                                                            self.rating_cutoff,
-                                                            self.wine_type_id)
-        return read_sql(query, conn)
+        self.csv_path = csv_path
+        self.rates_min = rates_min
+        if out_path[-4:] != '.csv':
+            raise Exception('out_path must be .csv format.')
+        self.out_path = out_path
 
     def clean_data(self, df):
         """
@@ -50,122 +31,131 @@ class WineRanking(object):
             df (df) - Dataframe to be cleaned.
         OUTPUT:
             df
-        Cleans the data before processing.
+        Cleans the data before calculations.
         """
         # Cast as int (Default was float)
         df['vintage_id'] = df['vintage_id'].astype('int')
         df['user_id'] = df['user_id'].astype('int')
         df = df.drop_duplicates(['vintage_id', 'user_id'])
+        users = df['user_id']
+        c = Counter(users)
+        users = set(users)
+        keep = set()
+        # Only consider users with at least 2 ratings to reduce memory usage
+        for user in users:
+            if c[user] > 1:
+                keep.add(user)
+        df = df[df['user_id'].isin(keep)]
         return df
 
-    def get_values(self, column, wins_dict, total_dict, pairs_dict):
+    def get_values(self, column, vint_d, wins_d):
         """
         INPUT:
             column (array) - Column corresponding to one user's ratings.
-            wins_dict (dict) - dict with wines as keys, wins as values.
-            total_dict (dict) - dict with wines as keys, 'games played'
-                                as values.
-            pairs_dict (dict) - dict with wine pairs as keys, 'matches played'
-                                as values.
+            vint_d (dict) - Nested dict with wines as keys, dicts as values.
+                            The dict for each wine contains wines
+                            the key wine has 'played' as keys and the values
+                            are the negative number of times they have
+                            'played'.
+            wins_d (dict) - Dict with wines as keys, 'games played'
+                            as values.
         OUTPUT:
-            dict, dict, dict
+            dict, dict
         Inputs information into dicts based on one user's ratings.
         """
         # Get non-NaN ratings for the user
         filtered = column[column > 0]
-        vintages = list(filtered.index)
+        vintages = set(filtered.index)  # Set of all vintage ids user has rated
 
-        # Need more than one wine to make pairs
         if len(vintages) > 1:
-            # Make list of all possible pairs of vintages rated by user
             combinations = itertools.combinations(vintages, 2)
             for combination in combinations:
-                wines = (combination[0], combination[1])
-                if filtered[wines[0]] == filtered[wines[1]]:
-                    # Wines tied. Count as two games where each wine won one.
-                    for wine in wines:
-                        wins_dict[wine] += 1
-                        total_dict[wine] += 1
-                    pairs_dict[combination] += 1
-                elif filtered[wines[0]] > filtered[wines[1]]:
-                    # Win goes to wine 1
-                    wins_dict[wines[0]] += 1
+                wine1, wine2 = combination[0], combination[1]
+                # Wines 'played' once. Subtract 1 from negative games played
+                vint_d[wine1][wine2] = vint_d[wine1].get(wine2, 0) - 1
+                vint_d[wine2][wine1] = vint_d[wine2].get(wine1, 0) - 1
+                # Add 1 to total games played for each wine.
+                vint_d[wine1][wine1] += 1
+                vint_d[wine2][wine2] += 1
+                # Account for ties. Counts as 2 games. Each won 1, lost 1
+                if filtered[wine1] == filtered[wine2]:
+                    wins_d[wine1] += 1
+                    wins_d[wine2] += 1
+                    vint_d[wine1][wine1] += 1
+                    vint_d[wine2][wine2] += 1
+                    vint_d[wine1][wine2] -= 1
+                    vint_d[wine2][wine1] -= 1
+                # Wine 1 won, add 1 to wins
+                elif filtered[wine1] > filtered[wine2]:
+                    wins_d[wine1] += 1
+                # Wine 2 won, add 1 to wins
                 else:
-                    # Win goes to wine 2
-                    wins_dict[wines[1]] += 1
-
-                for wine in wines:
-                    # Add to number of games played for each wine
-                    total_dict[wine] += 1
-                # Add to games played between the two wines
-                pairs_dict[combination] += 1
-        return wins_dict, total_dict, pairs_dict
+                    wins_d[wine2] += 1
+        return vint_d, wins_d
 
     def create_dicts(self, df):
         """
         INPUT:
             df (df) - Pivoted dataframe.
         OUTPUT:
-            dict, dict, dict
+            dict, dict
         Initializes and fills dictionaries.
         """
         users = list(df.columns.values)
-        vintages = list(df.index)
-
-        # Get all possible pairs of vintages
-        combinations = itertools.combinations(vintages, 2)
+        vintages = set(df.index)
 
         # Initialize dicts
-        wins_dict = dict.fromkeys(vintages, 0)
-        total_dict = dict.fromkeys(vintages, 0)
-        pairs_dict = dict.fromkeys(combinations, 0)
-        # Calculate wins and losses for each wine
+        vint_d = {}
+        wins_d = dict.fromkeys(vintages, 0)
+        for vintage in vintages:
+            d = {vintage: 2}  # Start with 2. Will add games played below.
+            vint_d[vintage] = d
+        # Calculate wins and losses for each wine.
         for user in users:
-            wins_dict, total_dict, pairs_dict = self.get_values(df[user],
-                                                                wins_dict,
-                                                                total_dict,
-                                                                pairs_dict)
-        return wins_dict, total_dict, pairs_dict
+            vint_d, wins_d = self.get_values(df[user], vint_d, wins_d)
+        return vint_d, wins_d
 
-    def solve(self, vintages, wins_dict, total_dict, pairs_dict):
+    def solve(self, vintages, vint_d, wins_d):
         """
         INPUT:
             vintages (list) - list of all wines in dataframe.
-            wins_dict (dict) - dict with wines as keys, wins as values.
-            total_dict (dict) - dict with wines as keys, 'games played'
-                                as values.
-            pairs_dict (dict) - dict with wine pairs as keys,
-                                'matches played' as values.
+            vint_d (dict) - Nested dict with wines as keys, dicts as values.
+                            The dict for each wine contains wines
+                            the key wine has 'played' as keys and the values
+                            are the negative number of times they have
+                            'played'.
+            wins_d (dict) - Dict with wines as keys, 'games played'
+                            as values.
         OUTPUT:
             df
         Solves matrix equation and returns sorted dataframe based on ranking.
         """
-        # Initialize matrix and column vector to fill with calculated values
-        vint_len = len(vintages)
-        matrix = np.zeros((vint_len, vint_len))
-        col_vector = np.zeros((vint_len, 1))
+        # Initialize matrix and column vector to fill with calculated values.
+        vintages = sorted(vintages)
+        matrix = np.array(pd.DataFrame(vint_d))
+        col_vector = np.zeros((len(vintages), 1))
 
-        # Fill the matrix and vector
-        for ix in xrange(vint_len):
-            wins = wins_dict[vintages[ix]]
-            total = total_dict[vintages[ix]]
+        # Fill the column vector.
+        for ix in xrange(len(vintages)):
+            vintage = vintages[ix]
+            wins = wins_d[vintage]
+            total = vint_d[vintage][vintage] - 2
             losses = total - wins
-            col_vector[ix] = 1 + (wins - losses)/2.0
-            for jx in xrange(vint_len):
-                if ix == jx:
-                    matrix[ix][jx] = total + 2
-                else:
-                    tup_key = tuple(sorted((vintages[ix], vintages[jx])))
-                    matrix[ix][jx] = -pairs_dict[tup_key]
-
-        # Solve matrix equation to obtain calculated ratings
-        new_ratings = np.linalg.solve(matrix, col_vector)
+            col_vector[ix] = 1 + (wins - losses) / 2.0
+        # Solve matrix equation to obtain calculated ratings.
+        matrix = np.nan_to_num(matrix)  # Replace NaNs with zeros.
+        new_ratings = linalg.solve(matrix, col_vector, sym_pos=True,
+                                   overwrite_a=True, overwrite_b=True)
         final = pd.DataFrame(np.column_stack(
                                             (np.array(vintages), new_ratings)
                                             ),
-                             columns=['vintage_id', 'rating'])
+                             columns=['vintage_id', 'score'])
+        # Get number of ratings for each wine.
+        final['n_rate'] = final['vintage_id'].apply(lambda x: self.rate_cnt[x])
+        # Only include wines with at least rates_min ratings.
+        final = final[final['n_rate'] >= self.rates_min]
         # Final array with vintages and calculated ratings
-        return final.sort('rating', axis=0, ascending=False)
+        return final.sort('score', axis=0, ascending=False)
 
     def rank_wines(self):
         """
@@ -175,13 +165,21 @@ class WineRanking(object):
             df
         Returns sorted dataframe based on ranking.
         """
-        df = self.get_data()
-        df = self.clean_data(df)
+        # Read data from csv and clean it.
+        df = pd.read_csv(self.csv_path)
+        self.df = self.clean_data(df)
         # Pivot for more useful dataframe
-        data_pivot = df.pivot('vintage_id', 'user_id', 'rating')
-
-        wins_dict, total_dict, pairs_dict = self.create_dicts(data_pivot)
+        data_pivot = self.df.pivot('vintage_id', 'user_id', 'rating')
+        # Get number of ratings for each wine
+        self.rate_cnt = data_pivot.count(axis=1)
+        # Calculate values and fill dicts
+        vint_d, wins_d = self.create_dicts(data_pivot)
 
         vintages = list(data_pivot.index)
-        self.ranking = self.solve(vintages, wins_dict, total_dict, pairs_dict)
+        # Solve the matrix equation
+        ranking = self.solve(vintages, vint_d, wins_d)
+        ranking['vintage_id'] = ranking['vintage_id'].astype('int')
+        self.ranking = ranking.reset_index(drop=True)
+        # Write results to csv
+        self.ranking.to_csv(self.out_path)
         return self.ranking
