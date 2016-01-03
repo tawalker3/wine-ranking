@@ -9,11 +9,10 @@ More details on the method can be found at this link: http://www.colleyrankings.
 
 <h2>Example Usage</h2>
 
-This class is set up for the specific database used, but here is an example of how to use it to rank all the German Rieslings in the database with more than 1 review:
+The data must be in a .csv file with columns "user_id", "vintage_id", and "rating". The class can then be used as shown below. "rates_min" is the minimum number of ratings a wine must have to be included in the final rankings list. Wines with fewer ratings than this are still included in calculations, because they provide information about how well other wines are competing overall.
 
 ```python
-wr = WineRanking(country="'de'", grape="'Riesling'",
-                 rating_cutoff=1, wine_type_id=2)
+wr = WineRanking(csv_path='data.csv', rates_min=50, out_path='results.csv')
 wr.rank_wines() # Call ranking method
 ```
 
